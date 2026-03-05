@@ -131,6 +131,24 @@ func TestClipboardImageNoContent(t *testing.T) {
 	}
 }
 
+func TestClipboardImageEmptyBytesNoContent(t *testing.T) {
+	clip := &mockClipboard{
+		clipType:  ClipboardInfo{Type: ClipboardImage, Format: "png"},
+		imageData: []byte{},
+	}
+	srv, tok := newTestServer(clip)
+
+	req := httptest.NewRequest("GET", "/clipboard/image", nil)
+	req.Header.Set("Authorization", "Bearer "+tok)
+	req.Header.Set("User-Agent", "cc-clip/0.1")
+	w := httptest.NewRecorder()
+	srv.mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("expected 204 for empty image bytes, got %d", w.Code)
+	}
+}
+
 func TestClipboardImageTooLarge(t *testing.T) {
 	bigImage := make([]byte, 21*1024*1024) // 21MB
 	clip := &mockClipboard{

@@ -74,6 +74,12 @@ _cc_clip_fetch_binary() {
         -H "Authorization: Bearer ${token}" \
         -H "User-Agent: cc-clip/0.1" \
         "http://${CC_CLIP_ADDR}${path}"; then
+        # Guard against empty response (e.g. HTTP 204 No Content)
+        if [ ! -s "$tmpfile" ]; then
+            _cc_clip_log "fetch returned empty body"
+            rm -f "$tmpfile"
+            return 10
+        fi
         cat "$tmpfile"
         rm -f "$tmpfile"
         return 0
@@ -200,6 +206,12 @@ _cc_clip_fetch_binary() {
         -H "Authorization: Bearer ${token}" \
         -H "User-Agent: cc-clip/0.1" \
         "http://${CC_CLIP_ADDR}${path}"; then
+        # Guard against empty response (e.g. HTTP 204 No Content)
+        if [ ! -s "$tmpfile" ]; then
+            _cc_clip_log "fetch returned empty body"
+            rm -f "$tmpfile"
+            return 10
+        fi
         cat "$tmpfile"
         rm -f "$tmpfile"
         return 0

@@ -109,6 +109,11 @@ func (s *Server) handleClipboardImage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if len(data) == 0 {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
 	if len(data) > maxImageSize {
 		http.Error(w, "image exceeds 20MB limit", http.StatusRequestEntityTooLarge)
 		return
