@@ -3,6 +3,8 @@ package doctor
 import (
 	"testing"
 	"time"
+
+	"github.com/shunmei/cc-clip/internal/token"
 )
 
 func TestCheckTokenExpiryReturnsResult(t *testing.T) {
@@ -16,6 +18,46 @@ func TestCheckTokenExpiryReturnsResult(t *testing.T) {
 	}
 	if results[0].Message == "" {
 		t.Fatal("expected non-empty message")
+	}
+}
+
+func TestCheckTokenExpiryUsesStoredExpiry(t *testing.T) {
+	tmpDir := t.TempDir()
+	token.TokenDirOverride = tmpDir
+	defer func() { token.TokenDirOverride = "" }()
+
+	// Write a token that expires in 6 hours
+	_, err := token.WriteTokenFile("test-token", time.Now().Add(6*time.Hour))
+	if err != nil {
+		t.Fatalf("WriteTokenFile: %v", err)
+	}
+
+	results := checkTokenExpiry()
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	if !results[0].OK {
+		t.Fatalf("expected OK for valid token, got FAIL: %s", results[0].Message)
+	}
+}
+
+func TestCheckTokenExpiryDetectsExpired(t *testing.T) {
+	tmpDir := t.TempDir()
+	token.TokenDirOverride = tmpDir
+	defer func() { token.TokenDirOverride = "" }()
+
+	// Write a token that expired 1 hour ago
+	_, err := token.WriteTokenFile("test-token", time.Now().Add(-1*time.Hour))
+	if err != nil {
+		t.Fatalf("WriteTokenFile: %v", err)
+	}
+
+	results := checkTokenExpiry()
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	if results[0].OK {
+		t.Fatalf("expected FAIL for expired token, got OK: %s", results[0].Message)
 	}
 }
 

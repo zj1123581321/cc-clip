@@ -73,29 +73,35 @@ func RunLocal(port int) []CheckResult {
 	return results
 }
 
-// checkTokenExpiry checks if the token file has a valid (non-expired) timestamp.
-// This reads the token file's modification time as a proxy for token creation time,
-// since the current token file format stores only the token string.
+// checkTokenExpiry checks if the stored token has expired by parsing the
+// explicit expiry timestamp from the token file.
 func checkTokenExpiry() []CheckResult {
-	dir, err := token.TokenDir()
+	_, expiresAt, err := token.ReadTokenFileWithExpiry()
 	if err != nil {
-		return []CheckResult{{"token-expiry", false, "cannot determine token directory"}}
-	}
-
-	path := filepath.Join(dir, "session.token")
-	info, err := os.Stat(path)
-	if err != nil {
-		return []CheckResult{{"token-expiry", false, "token file not found"}}
-	}
-
-	age := time.Since(info.ModTime())
-	if age > 24*time.Hour {
+		// Fallback: file exists but uses old format (no expiry line).
+		// Check file mtime as a rough proxy.
+		dir, dirErr := token.TokenDir()
+		if dirErr != nil {
+			return []CheckResult{{"token-expiry", false, "cannot determine token directory"}}
+		}
+		path := filepath.Join(dir, "session.token")
+		info, statErr := os.Stat(path)
+		if statErr != nil {
+			return []CheckResult{{"token-expiry", false, "token file not found"}}
+		}
+		age := time.Since(info.ModTime())
 		return []CheckResult{{"token-expiry", false,
-			fmt.Sprintf("token file is %s old (may be stale)", formatDuration(age))}}
+			fmt.Sprintf("old token format (no expiry stored), file is %s old — restart daemon to upgrade", formatDuration(age))}}
+	}
+
+	remaining := time.Until(expiresAt)
+	if remaining <= 0 {
+		return []CheckResult{{"token-expiry", false,
+			fmt.Sprintf("token expired %s ago", formatDuration(-remaining))}}
 	}
 
 	return []CheckResult{{"token-expiry", true,
-		fmt.Sprintf("token file modified %s ago", formatDuration(age))}}
+		fmt.Sprintf("token valid, expires in %s (%s)", formatDuration(remaining), expiresAt.Format(time.RFC3339))}}
 }
 
 // checkLaunchdService checks if the cc-clip launchd service is installed (macOS).

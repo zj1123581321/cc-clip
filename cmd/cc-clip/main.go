@@ -386,6 +386,13 @@ func cmdConnect() {
 	}
 
 	needsUpload := force || shim.NeedsUpload(localBin, remoteState)
+	if !needsUpload {
+		// Verify the remote binary actually exists — deploy state can be stale.
+		if _, err := session.Exec(fmt.Sprintf("test -x %s", remoteBin)); err != nil {
+			fmt.Println("[4/7] Remote binary missing despite cached state, re-uploading")
+			needsUpload = true
+		}
+	}
 	if needsUpload {
 		fmt.Printf("[4/7] Uploading cc-clip binary...\n")
 		// Ensure remote directory exists
@@ -417,6 +424,25 @@ func cmdConnect() {
 		fmt.Println("[5/7] Shim already installed, skipping")
 	}
 
+	// Step 5b: Fix PATH if needed
+	pathFixed := remoteState != nil && remoteState.PathFixed
+	if !pathFixed {
+		fixed, err := shim.IsPathFixedSession(session)
+		if err != nil {
+			log.Printf("      warning: could not check PATH: %v", err)
+		} else if !fixed {
+			fmt.Printf("      fixing remote PATH...\n")
+			if err := shim.FixRemotePathSession(session); err != nil {
+				log.Printf("      warning: PATH fix failed: %v", err)
+			} else {
+				pathFixed = true
+				fmt.Println("      PATH marker injected")
+			}
+		} else {
+			pathFixed = true
+		}
+	}
+
 	// Step 6: Always sync token
 	fmt.Printf("[6/7] Syncing token...\n")
 	if err := shim.WriteRemoteTokenViaSession(session, daemonToken); err != nil {
@@ -431,12 +457,10 @@ func cmdConnect() {
 		BinaryVersion: version,
 		ShimInstalled: true,
 		ShimTarget:    "xclip",
+		PathFixed:     pathFixed,
 	}
-	if remoteState != nil {
-		newState.PathFixed = remoteState.PathFixed
-		if remoteState.ShimTarget != "" {
-			newState.ShimTarget = remoteState.ShimTarget
-		}
+	if remoteState != nil && remoteState.ShimTarget != "" {
+		newState.ShimTarget = remoteState.ShimTarget
 	}
 	if err := shim.WriteRemoteState(session, newState); err != nil {
 		log.Printf("      warning: could not write remote deploy state: %v", err)
@@ -469,9 +493,15 @@ func connectVerifyTunnel(session *shim.SSHSession, port int, host string) {
 		return
 	}
 
-	// Verify shim can reach daemon and get a response
+	// Verify remote binary is functional
 	shimTestCmd := fmt.Sprintf("%s status 2>&1", remoteBin)
-	shimOut, _ := session.Exec(shimTestCmd)
+	shimOut, shimErr := session.Exec(shimTestCmd)
+	if shimErr != nil {
+		fmt.Printf("      WARNING: remote cc-clip status failed: %s\n", shimOut)
+		fmt.Println("      The remote binary may be missing or broken.")
+		fmt.Println("      Re-run with --force to redeploy: cc-clip connect", host, "--force")
+		os.Exit(1)
+	}
 	fmt.Printf("      %s\n", shimOut)
 
 	fmt.Println()
