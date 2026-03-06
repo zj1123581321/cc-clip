@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/shunmei/cc-clip/internal/shim"
+	"github.com/shunmei/cc-clip/internal/token"
 )
 
 func RunRemote(host string, port int) []CheckResult {
@@ -65,6 +66,15 @@ func RunRemote(host string, port int) []CheckResult {
 		results = append(results, CheckResult{"remote-token", false, "token file missing"})
 	}
 
+	// Check remote token matches local token
+	results = append(results, checkTokenMatch(host)...)
+
+	// Check deploy state file
+	results = append(results, checkDeployState(host)...)
+
+	// Check PATH fix (rc file marker)
+	results = append(results, checkPathFix(host)...)
+
 	// End-to-end image round-trip (only if tunnel is up)
 	if tunnelOK(results) {
 		results = append(results, runImageProbe(host, port)...)
@@ -106,4 +116,48 @@ func runImageProbe(host string, port int) []CheckResult {
 		return []CheckResult{{"image-probe", true, fmt.Sprintf("remote response: %s (copy an image to test)", out)}}
 	}
 	return []CheckResult{{"image-probe", false, fmt.Sprintf("unexpected response: %s", out)}}
+}
+
+// checkTokenMatch verifies the remote token matches the local daemon token.
+func checkTokenMatch(host string) []CheckResult {
+	localToken, err := token.ReadTokenFile()
+	if err != nil {
+		return []CheckResult{{"token-match", false, "cannot read local token to compare"}}
+	}
+
+	remoteToken, err := shim.RemoteExec(host, "cat ~/.cache/cc-clip/session.token 2>/dev/null")
+	if err != nil || strings.TrimSpace(remoteToken) == "" {
+		return []CheckResult{{"token-match", false, "cannot read remote token"}}
+	}
+
+	if strings.TrimSpace(remoteToken) == localToken {
+		return []CheckResult{{"token-match", true, "remote token matches local"}}
+	}
+	return []CheckResult{{"token-match", false, "remote token differs from local (re-run 'cc-clip connect')"}}
+}
+
+// checkDeployState checks if the deploy state file exists on the remote.
+func checkDeployState(host string) []CheckResult {
+	out, err := shim.RemoteExec(host, "cat ~/.cache/cc-clip/deploy.json 2>/dev/null || echo 'not found'")
+	if err != nil || strings.Contains(out, "not found") || strings.TrimSpace(out) == "" {
+		return []CheckResult{{"deploy-state", false, "deploy.json not found (deploy state not tracked)"}}
+	}
+
+	// Basic validation: check it contains expected fields
+	if strings.Contains(out, "binary_hash") {
+		return []CheckResult{{"deploy-state", true, "deploy.json present and valid"}}
+	}
+	return []CheckResult{{"deploy-state", false, "deploy.json exists but may be malformed"}}
+}
+
+// checkPathFix verifies the PATH marker block exists in the remote shell rc file.
+func checkPathFix(host string) []CheckResult {
+	fixed, err := shim.IsPathFixed(host)
+	if err != nil {
+		return []CheckResult{{"path-fix", false, fmt.Sprintf("cannot check PATH marker: %v", err)}}
+	}
+	if fixed {
+		return []CheckResult{{"path-fix", true, "PATH marker present in shell rc file"}}
+	}
+	return []CheckResult{{"path-fix", false, "PATH marker not found in shell rc file"}}
 }

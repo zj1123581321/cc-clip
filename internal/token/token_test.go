@@ -1,6 +1,7 @@
 package token
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -78,7 +79,6 @@ func TestCurrent(t *testing.T) {
 }
 
 func TestWriteAndReadTokenFile(t *testing.T) {
-	// Use temp dir to avoid polluting real ~/.cache
 	tmpDir := filepath.Join(t.TempDir(), "cc-clip")
 	TokenDirOverride = tmpDir
 	defer func() { TokenDirOverride = "" }()
@@ -89,7 +89,7 @@ func TestWriteAndReadTokenFile(t *testing.T) {
 		t.Fatalf("Generate failed: %v", err)
 	}
 
-	path, err := WriteTokenFile(s.Token)
+	path, err := WriteTokenFile(s.Token, s.ExpiresAt)
 	if err != nil {
 		t.Fatalf("WriteTokenFile failed: %v", err)
 	}
@@ -101,5 +101,206 @@ func TestWriteAndReadTokenFile(t *testing.T) {
 	}
 	if read != s.Token {
 		t.Fatalf("token mismatch: wrote %q, read %q", s.Token, read)
+	}
+}
+
+func TestReadTokenFileWithExpiry(t *testing.T) {
+	tmpDir := filepath.Join(t.TempDir(), "cc-clip")
+	TokenDirOverride = tmpDir
+	defer func() { TokenDirOverride = "" }()
+
+	expiry := time.Now().Add(2 * time.Hour).Truncate(time.Second)
+	_, err := WriteTokenFile("test-token-abc", expiry)
+	if err != nil {
+		t.Fatalf("WriteTokenFile failed: %v", err)
+	}
+
+	tok, expiresAt, err := ReadTokenFileWithExpiry()
+	if err != nil {
+		t.Fatalf("ReadTokenFileWithExpiry failed: %v", err)
+	}
+	if tok != "test-token-abc" {
+		t.Fatalf("token mismatch: expected %q, got %q", "test-token-abc", tok)
+	}
+	if !expiresAt.Equal(expiry) {
+		t.Fatalf("expiry mismatch: expected %v, got %v", expiry, expiresAt)
+	}
+}
+
+func TestReadTokenFileWithExpiry_OldFormat(t *testing.T) {
+	tmpDir := filepath.Join(t.TempDir(), "cc-clip")
+	TokenDirOverride = tmpDir
+	defer func() { TokenDirOverride = "" }()
+
+	// Simulate old format: single line, no expiry
+	dir, err := TokenDir()
+	if err != nil {
+		t.Fatalf("TokenDir failed: %v", err)
+	}
+	path := filepath.Join(dir, "session.token")
+	if err := os.WriteFile(path, []byte("old-format-token\n"), 0600); err != nil {
+		t.Fatalf("write old format file failed: %v", err)
+	}
+
+	// ReadTokenFile should still work (backward compat)
+	tok, err := ReadTokenFile()
+	if err != nil {
+		t.Fatalf("ReadTokenFile with old format failed: %v", err)
+	}
+	if tok != "old-format-token" {
+		t.Fatalf("expected %q, got %q", "old-format-token", tok)
+	}
+
+	// ReadTokenFileWithExpiry should return error for old format
+	_, _, err = ReadTokenFileWithExpiry()
+	if err == nil {
+		t.Fatal("expected error for old format token file, got nil")
+	}
+}
+
+func TestLoadOrGenerate_ReusesValidToken(t *testing.T) {
+	tmpDir := filepath.Join(t.TempDir(), "cc-clip")
+	TokenDirOverride = tmpDir
+	defer func() { TokenDirOverride = "" }()
+
+	ttl := 1 * time.Hour
+
+	// Write a valid token file
+	expiry := time.Now().Add(30 * time.Minute).Truncate(time.Second)
+	_, err := WriteTokenFile("existing-valid-token", expiry)
+	if err != nil {
+		t.Fatalf("WriteTokenFile failed: %v", err)
+	}
+
+	m := NewManager(ttl)
+	session, reused, err := m.LoadOrGenerate(ttl)
+	if err != nil {
+		t.Fatalf("LoadOrGenerate failed: %v", err)
+	}
+	if !reused {
+		t.Fatal("expected token to be reused, but it was not")
+	}
+	if session.Token != "existing-valid-token" {
+		t.Fatalf("expected reused token %q, got %q", "existing-valid-token", session.Token)
+	}
+	if !session.ExpiresAt.Equal(expiry) {
+		t.Fatalf("expected expiry %v, got %v", expiry, session.ExpiresAt)
+	}
+
+	// Validate should accept the loaded token
+	if err := m.Validate("existing-valid-token"); err != nil {
+		t.Fatalf("Validate failed on reused token: %v", err)
+	}
+}
+
+func TestLoadOrGenerate_ExpiredToken(t *testing.T) {
+	tmpDir := filepath.Join(t.TempDir(), "cc-clip")
+	TokenDirOverride = tmpDir
+	defer func() { TokenDirOverride = "" }()
+
+	ttl := 1 * time.Hour
+
+	// Write an expired token file
+	expiry := time.Now().Add(-1 * time.Minute)
+	_, err := WriteTokenFile("expired-token", expiry)
+	if err != nil {
+		t.Fatalf("WriteTokenFile failed: %v", err)
+	}
+
+	m := NewManager(ttl)
+	session, reused, err := m.LoadOrGenerate(ttl)
+	if err != nil {
+		t.Fatalf("LoadOrGenerate failed: %v", err)
+	}
+	if reused {
+		t.Fatal("expected new token generation, but token was reused")
+	}
+	if session.Token == "expired-token" {
+		t.Fatal("expected a different token, got the expired one")
+	}
+	if len(session.Token) != 64 {
+		t.Fatalf("expected 64 char hex token, got %d chars", len(session.Token))
+	}
+}
+
+func TestLoadOrGenerate_MissingFile(t *testing.T) {
+	tmpDir := filepath.Join(t.TempDir(), "cc-clip")
+	TokenDirOverride = tmpDir
+	defer func() { TokenDirOverride = "" }()
+
+	ttl := 1 * time.Hour
+
+	// No token file exists
+	m := NewManager(ttl)
+	session, reused, err := m.LoadOrGenerate(ttl)
+	if err != nil {
+		t.Fatalf("LoadOrGenerate failed: %v", err)
+	}
+	if reused {
+		t.Fatal("expected new token generation, but token was reused")
+	}
+	if len(session.Token) != 64 {
+		t.Fatalf("expected 64 char hex token, got %d chars", len(session.Token))
+	}
+}
+
+func TestLoadOrGenerate_OldFormatTreatedAsExpired(t *testing.T) {
+	tmpDir := filepath.Join(t.TempDir(), "cc-clip")
+	TokenDirOverride = tmpDir
+	defer func() { TokenDirOverride = "" }()
+
+	ttl := 1 * time.Hour
+
+	// Write old format (single line, no expiry)
+	dir, err := TokenDir()
+	if err != nil {
+		t.Fatalf("TokenDir failed: %v", err)
+	}
+	path := filepath.Join(dir, "session.token")
+	if err := os.WriteFile(path, []byte("old-single-line-token\n"), 0600); err != nil {
+		t.Fatalf("write failed: %v", err)
+	}
+
+	m := NewManager(ttl)
+	session, reused, err := m.LoadOrGenerate(ttl)
+	if err != nil {
+		t.Fatalf("LoadOrGenerate failed: %v", err)
+	}
+	if reused {
+		t.Fatal("expected new token generation for old format, but token was reused")
+	}
+	if session.Token == "old-single-line-token" {
+		t.Fatal("expected a different token, got the old one")
+	}
+	if len(session.Token) != 64 {
+		t.Fatalf("expected 64 char hex token, got %d chars", len(session.Token))
+	}
+}
+
+func TestRotateToken_ForcesNewGeneration(t *testing.T) {
+	tmpDir := filepath.Join(t.TempDir(), "cc-clip")
+	TokenDirOverride = tmpDir
+	defer func() { TokenDirOverride = "" }()
+
+	ttl := 1 * time.Hour
+
+	// Write a valid token file
+	expiry := time.Now().Add(30 * time.Minute)
+	_, err := WriteTokenFile("should-not-be-reused", expiry)
+	if err != nil {
+		t.Fatalf("WriteTokenFile failed: %v", err)
+	}
+
+	// Simulate --rotate-token: use Generate() directly instead of LoadOrGenerate()
+	m := NewManager(ttl)
+	session, err := m.Generate()
+	if err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+	if session.Token == "should-not-be-reused" {
+		t.Fatal("expected a different token when rotating, got the existing one")
+	}
+	if len(session.Token) != 64 {
+		t.Fatalf("expected 64 char hex token, got %d chars", len(session.Token))
 	}
 }

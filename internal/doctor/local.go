@@ -2,8 +2,11 @@ package doctor
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/shunmei/cc-clip/internal/token"
@@ -59,7 +62,81 @@ func RunLocal(port int) []CheckResult {
 		results = append(results, CheckResult{"token", true, fmt.Sprintf("present (%d chars)", len(tok))})
 	}
 
+	// Check token expiry
+	results = append(results, checkTokenExpiry()...)
+
+	// Check launchd service (macOS only)
+	if runtime.GOOS == "darwin" {
+		results = append(results, checkLaunchdService()...)
+	}
+
 	return results
+}
+
+// checkTokenExpiry checks if the token file has a valid (non-expired) timestamp.
+// This reads the token file's modification time as a proxy for token creation time,
+// since the current token file format stores only the token string.
+func checkTokenExpiry() []CheckResult {
+	dir, err := token.TokenDir()
+	if err != nil {
+		return []CheckResult{{"token-expiry", false, "cannot determine token directory"}}
+	}
+
+	path := filepath.Join(dir, "session.token")
+	info, err := os.Stat(path)
+	if err != nil {
+		return []CheckResult{{"token-expiry", false, "token file not found"}}
+	}
+
+	age := time.Since(info.ModTime())
+	if age > 24*time.Hour {
+		return []CheckResult{{"token-expiry", false,
+			fmt.Sprintf("token file is %s old (may be stale)", formatDuration(age))}}
+	}
+
+	return []CheckResult{{"token-expiry", true,
+		fmt.Sprintf("token file modified %s ago", formatDuration(age))}}
+}
+
+// checkLaunchdService checks if the cc-clip launchd service is installed (macOS).
+func checkLaunchdService() []CheckResult {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return []CheckResult{{"launchd", false, "cannot determine home directory"}}
+	}
+
+	plistPath := filepath.Join(home, "Library", "LaunchAgents", "com.cc-clip.daemon.plist")
+	if _, err := os.Stat(plistPath); os.IsNotExist(err) {
+		return []CheckResult{{"launchd", false, "service not installed (run 'cc-clip service install')"}}
+	}
+
+	// Check if the job is loaded
+	out, err := exec.Command("launchctl", "list").CombinedOutput()
+	if err != nil {
+		return []CheckResult{{"launchd", false, "cannot query launchctl"}}
+	}
+
+	if strings.Contains(string(out), "com.cc-clip.daemon") {
+		return []CheckResult{{"launchd", true, "service installed and loaded"}}
+	}
+
+	return []CheckResult{{"launchd", false, "plist installed but service not loaded"}}
+}
+
+// formatDuration formats a duration in a human-readable form.
+func formatDuration(d time.Duration) string {
+	if d < time.Minute {
+		return fmt.Sprintf("%ds", int(d.Seconds()))
+	}
+	if d < time.Hour {
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	}
+	if d < 24*time.Hour {
+		return fmt.Sprintf("%dh%dm", int(d.Hours()), int(d.Minutes())%60)
+	}
+	days := int(d.Hours()) / 24
+	hours := int(d.Hours()) % 24
+	return fmt.Sprintf("%dd%dh", days, hours)
 }
 
 func PrintResults(results []CheckResult) bool {

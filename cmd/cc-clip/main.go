@@ -15,6 +15,7 @@ import (
 	"github.com/shunmei/cc-clip/internal/daemon"
 	"github.com/shunmei/cc-clip/internal/doctor"
 	"github.com/shunmei/cc-clip/internal/exitcode"
+	"github.com/shunmei/cc-clip/internal/service"
 	"github.com/shunmei/cc-clip/internal/shim"
 	"github.com/shunmei/cc-clip/internal/token"
 	"github.com/shunmei/cc-clip/internal/tunnel"
@@ -45,6 +46,8 @@ func main() {
 		cmdStatus()
 	case "doctor":
 		cmdDoctor()
+	case "service":
+		cmdService()
 	case "version":
 		fmt.Printf("cc-clip %s\n", version)
 	case "help", "--help", "-h":
@@ -65,12 +68,18 @@ Usage:
 Daemon (local):
   serve              Start local clipboard daemon
     --port           Listen port (default: 18339, env: CC_CLIP_PORT)
+    --rotate-token   Force new token generation (ignore existing)
+  service            Manage launchd service (macOS)
+    install          Install and load launchd service
+    uninstall        Unload and remove launchd service
+    status           Show launchd service status
 
 Remote:
   install            Install xclip/wl-paste shim
     --target         auto|xclip|wl-paste (default: auto)
     --path           Install directory (default: ~/.local/bin)
   uninstall          Remove shim
+    --host           Also clean up PATH marker on remote host
   paste              Fetch clipboard image and output path
     --out-dir        Output directory (env: CC_CLIP_OUT_DIR)
 
@@ -78,6 +87,8 @@ Deploy (local -> remote):
   connect <host>     Deploy cc-clip to remote and establish session
     --port           Tunnel port (default: 18339)
     --local-bin      Path to pre-downloaded remote binary
+    --force          Ignore remote state, full redeploy
+    --token-only     Only sync token, skip binary/shim deploy
 
 Diagnostics:
   status             Show component status
@@ -112,6 +123,15 @@ func getFlag(name, fallback string) string {
 	return fallback
 }
 
+func hasFlag(name string) bool {
+	for _, arg := range os.Args {
+		if arg == "--"+name {
+			return true
+		}
+	}
+	return false
+}
+
 func getTokenTTL() time.Duration {
 	ttl := 12 * time.Hour
 	if env := os.Getenv("CC_CLIP_TOKEN_TTL"); env != "" {
@@ -126,14 +146,33 @@ func cmdServe() {
 	port := getPort()
 	ttl := getTokenTTL()
 	addr := fmt.Sprintf("127.0.0.1:%d", port)
+	rotateToken := hasFlag("rotate-token")
 
 	tm := token.NewManager(ttl)
-	session, err := tm.Generate()
-	if err != nil {
-		log.Fatalf("failed to generate token: %v", err)
+
+	var session token.Session
+	var reused bool
+	var err error
+
+	if rotateToken {
+		session, err = tm.Generate()
+		if err != nil {
+			log.Fatalf("failed to generate token: %v", err)
+		}
+		log.Printf("Token rotated (--rotate-token): new token generated")
+	} else {
+		session, reused, err = tm.LoadOrGenerate(ttl)
+		if err != nil {
+			log.Fatalf("failed to load or generate token: %v", err)
+		}
+		if reused {
+			log.Printf("Token reused from existing file (expires %s)", session.ExpiresAt.Format(time.RFC3339))
+		} else {
+			log.Printf("Token generated (no valid existing token found)")
+		}
 	}
 
-	tokenPath, err := token.WriteTokenFile(session.Token)
+	tokenPath, err := token.WriteTokenFile(session.Token, session.ExpiresAt)
 	if err != nil {
 		log.Fatalf("failed to write token file: %v", err)
 	}
@@ -238,6 +277,7 @@ func cmdInstall() {
 func cmdUninstall() {
 	targetStr := getFlag("target", "auto")
 	installPath := getFlag("path", "")
+	host := getFlag("host", "")
 
 	var target shim.Target
 	switch targetStr {
@@ -256,47 +296,33 @@ func cmdUninstall() {
 	}
 
 	fmt.Println("Shim removed successfully.")
+
+	if host != "" {
+		fmt.Printf("Removing PATH marker from remote %s...\n", host)
+		if err := shim.RemoveRemotePath(host); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: failed to remove PATH marker: %v\n", err)
+		} else {
+			fmt.Println("PATH marker removed from remote shell rc file.")
+		}
+	}
 }
 
 func cmdConnect() {
 	if len(os.Args) < 3 {
-		log.Fatal("usage: cc-clip connect <host> [--port PORT]")
+		log.Fatal("usage: cc-clip connect <host> [--port PORT] [--force] [--token-only]")
 	}
 	host := os.Args[2]
 	port := getPort()
+	force := hasFlag("force")
+	tokenOnly := hasFlag("token-only")
 
 	// Step 1: Check local daemon
-	fmt.Printf("[1/6] Checking local daemon on :%d...\n", port)
+	fmt.Printf("[1/7] Checking local daemon on :%d...\n", port)
 	probeTimeout := envDuration("CC_CLIP_PROBE_TIMEOUT_MS", 500*time.Millisecond)
 	if err := tunnel.Probe(fmt.Sprintf("127.0.0.1:%d", port), probeTimeout); err != nil {
 		log.Fatalf("Local daemon not running. Start it first: cc-clip serve")
 	}
 	fmt.Println("      daemon running")
-
-	// Step 2: Detect remote arch
-	fmt.Printf("[2/6] Detecting remote arch...\n")
-	remoteOS, remoteArch, err := shim.DetectRemoteArch(host)
-	if err != nil {
-		log.Fatalf("      failed: %v", err)
-	}
-	fmt.Printf("      %s/%s\n", remoteOS, remoteArch)
-
-	// Step 3: Build or locate binary for remote arch
-	fmt.Printf("[3/6] Preparing binary for %s/%s...\n", remoteOS, remoteArch)
-	localBin, remoteBin, err := prepareBinary(host, remoteOS, remoteArch)
-	if err != nil {
-		log.Fatalf("      failed: %v", err)
-	}
-
-	// Step 4: Upload binary
-	fmt.Printf("[4/6] Uploading cc-clip binary...\n")
-	if err := shim.UploadBinary(host, localBin, remoteBin); err != nil {
-		log.Fatalf("      failed: %v", err)
-	}
-	fmt.Printf("      uploaded to %s\n", remoteBin)
-
-	// Step 5: Install shim + write the SAME token that serve daemon uses
-	fmt.Printf("[5/6] Installing shim and writing token...\n")
 
 	// Read the token that `cc-clip serve` already generated and holds in memory.
 	// This is the token the daemon validates against — we must send this exact token to the remote.
@@ -305,29 +331,130 @@ func cmdConnect() {
 		log.Fatalf("      cannot read daemon token (is 'cc-clip serve' running?): %v", err)
 	}
 
-	installCmd := fmt.Sprintf("%s install --port %d", remoteBin, port)
-	out, err := shim.RemoteExec(host, installCmd)
+	// Step 2: Start SSH master session (passphrase prompted once here)
+	fmt.Printf("[2/7] Establishing SSH session to %s...\n", host)
+	session, err := shim.NewSSHSession(host)
 	if err != nil {
-		// Shim might already exist, try uninstall then install
-		shim.RemoteExec(host, fmt.Sprintf("%s uninstall", remoteBin))
-		out, err = shim.RemoteExec(host, installCmd)
-		if err != nil {
-			log.Fatalf("      remote install failed: %s: %v", out, err)
-		}
+		log.Fatalf("      failed: %v", err)
 	}
-	fmt.Printf("      %s\n", out)
+	defer session.Close()
+	fmt.Println("      SSH master connected")
 
-	if err := shim.WriteRemoteToken(host, daemonToken); err != nil {
+	// --token-only: skip binary/shim, just sync token and verify tunnel
+	if tokenOnly {
+		fmt.Println("[3/7] Skipping binary check (--token-only)")
+		fmt.Println("[4/7] Skipping binary upload (--token-only)")
+		fmt.Println("[5/7] Skipping shim install (--token-only)")
+
+		fmt.Printf("[6/7] Syncing token...\n")
+		if err := shim.WriteRemoteTokenViaSession(session, daemonToken); err != nil {
+			log.Fatalf("      failed to write token: %v", err)
+		}
+		fmt.Println("      token synced from local daemon")
+
+		connectVerifyTunnel(session, port, host)
+		return
+	}
+
+	// Step 3: Read remote deploy state and detect arch
+	fmt.Printf("[3/7] Checking remote state...\n")
+	remoteState, err := shim.ReadRemoteState(session)
+	if err != nil {
+		log.Printf("      warning: could not read remote state: %v", err)
+	}
+	if remoteState != nil && !force {
+		fmt.Printf("      remote state: binary=%s shim=%v\n", remoteState.BinaryVersion, remoteState.ShimInstalled)
+	} else if force {
+		fmt.Println("      --force: ignoring remote state")
+		remoteState = nil
+	} else {
+		fmt.Println("      no previous deploy state")
+	}
+
+	remoteOS, remoteArch, err := shim.DetectRemoteArchViaSession(session)
+	if err != nil {
+		log.Fatalf("      failed to detect remote arch: %v", err)
+	}
+	fmt.Printf("      %s/%s\n", remoteOS, remoteArch)
+
+	remoteBin := "~/.local/bin/cc-clip"
+
+	// Step 4: Prepare and upload binary (skip if hash matches)
+	localBin, err := prepareBinaryLocal(host, remoteOS, remoteArch)
+	if err != nil {
+		log.Fatalf("[4/7] Prepare binary failed: %v", err)
+	}
+
+	needsUpload := force || shim.NeedsUpload(localBin, remoteState)
+	if needsUpload {
+		fmt.Printf("[4/7] Uploading cc-clip binary...\n")
+		// Ensure remote directory exists
+		session.Exec("mkdir -p ~/.local/bin")
+		if err := shim.UploadBinaryViaSession(session, localBin, remoteBin); err != nil {
+			log.Fatalf("      failed: %v", err)
+		}
+		fmt.Printf("      uploaded to %s\n", remoteBin)
+	} else {
+		fmt.Println("[4/7] Binary up to date, skipping upload")
+	}
+
+	// Step 5: Install shim (skip if already installed and not forced)
+	needsShim := force || shim.NeedsShimInstall(remoteState)
+	if needsShim {
+		fmt.Printf("[5/7] Installing shim...\n")
+		installCmd := fmt.Sprintf("%s install --port %d", remoteBin, port)
+		out, err := session.Exec(installCmd)
+		if err != nil {
+			// Shim might already exist, try uninstall then install
+			session.Exec(fmt.Sprintf("%s uninstall", remoteBin))
+			out, err = session.Exec(installCmd)
+			if err != nil {
+				log.Fatalf("      remote install failed: %s: %v", out, err)
+			}
+		}
+		fmt.Printf("      %s\n", out)
+	} else {
+		fmt.Println("[5/7] Shim already installed, skipping")
+	}
+
+	// Step 6: Always sync token
+	fmt.Printf("[6/7] Syncing token...\n")
+	if err := shim.WriteRemoteTokenViaSession(session, daemonToken); err != nil {
 		log.Fatalf("      failed to write token: %v", err)
 	}
 	fmt.Println("      token synced from local daemon")
 
-	// Step 6: Verify tunnel connectivity from remote side
-	fmt.Printf("[6/6] Verifying tunnel from remote...\n")
+	// Update remote deploy state
+	localHash, _ := shim.LocalBinaryHash(localBin)
+	newState := &shim.DeployState{
+		BinaryHash:    localHash,
+		BinaryVersion: version,
+		ShimInstalled: true,
+		ShimTarget:    "xclip",
+	}
+	if remoteState != nil {
+		newState.PathFixed = remoteState.PathFixed
+		if remoteState.ShimTarget != "" {
+			newState.ShimTarget = remoteState.ShimTarget
+		}
+	}
+	if err := shim.WriteRemoteState(session, newState); err != nil {
+		log.Printf("      warning: could not write remote deploy state: %v", err)
+	}
+
+	// Step 7: Verify tunnel
+	connectVerifyTunnel(session, port, host)
+}
+
+// connectVerifyTunnel verifies the SSH tunnel from the remote side.
+func connectVerifyTunnel(session *shim.SSHSession, port int, host string) {
+	remoteBin := "~/.local/bin/cc-clip"
+
+	fmt.Printf("[7/7] Verifying tunnel from remote...\n")
 	probeCmd := fmt.Sprintf(
 		"bash -c 'echo >/dev/tcp/127.0.0.1/%d' 2>/dev/null && echo 'tunnel:ok' || echo 'tunnel:fail'",
 		port)
-	probeOut, _ := shim.RemoteExec(host, probeCmd)
+	probeOut, _ := session.Exec(probeCmd)
 
 	if probeOut == "tunnel:ok" {
 		fmt.Println("      tunnel verified")
@@ -344,48 +471,45 @@ func cmdConnect() {
 
 	// Verify shim can reach daemon and get a response
 	shimTestCmd := fmt.Sprintf("%s status 2>&1", remoteBin)
-	shimOut, _ := shim.RemoteExec(host, shimTestCmd)
+	shimOut, _ := session.Exec(shimTestCmd)
 	fmt.Printf("      %s\n", shimOut)
 
 	fmt.Println()
 	fmt.Println("Setup complete. Ctrl+V in remote Claude Code will paste images from your Mac.")
 }
 
-func prepareBinary(host, remoteOS, remoteArch string) (localBin string, remoteBin string, err error) {
-	remoteBin = "~/.local/bin/cc-clip"
-
-	// Ensure remote directory exists
-	shim.RemoteExec(host, "mkdir -p ~/.local/bin")
-
+// prepareBinaryLocal resolves the local binary path without performing remote operations.
+// Remote operations (mkdir, etc.) are done by the caller using the SSH session.
+func prepareBinaryLocal(host, remoteOS, remoteArch string) (localBin string, err error) {
 	// User-specified local binary takes highest priority
 	if flagBin := getFlag("local-bin", ""); flagBin != "" {
 		if _, err := os.Stat(flagBin); err != nil {
-			return "", "", fmt.Errorf("specified --local-bin not found: %s", flagBin)
+			return "", fmt.Errorf("specified --local-bin not found: %s", flagBin)
 		}
-		return flagBin, remoteBin, nil
+		return flagBin, nil
 	}
 
 	if remoteOS == runtime.GOOS && remoteArch == runtime.GOARCH {
 		// Same arch — use current binary
 		localBin, err = os.Executable()
 		if err != nil {
-			return "", "", fmt.Errorf("cannot find current executable: %w", err)
+			return "", fmt.Errorf("cannot find current executable: %w", err)
 		}
-		return localBin, remoteBin, nil
+		return localBin, nil
 	}
 
 	// Different arch — try downloading matching release binary from GitHub
 	fmt.Printf("      downloading cc-clip %s for %s/%s...\n", version, remoteOS, remoteArch)
 	downloaded, dlErr := downloadReleaseBinary(remoteOS, remoteArch)
 	if dlErr == nil {
-		return downloaded, remoteBin, nil
+		return downloaded, nil
 	}
 	fmt.Printf("      download failed: %v\n", dlErr)
 
 	// Fallback: cross-compile (requires source + go toolchain)
 	fmt.Printf("      trying cross-compile...\n")
 	if _, lookErr := exec.LookPath("go"); lookErr != nil {
-		return "", "", fmt.Errorf(
+		return "", fmt.Errorf(
 			"cannot obtain cc-clip for %s/%s:\n"+
 				"  - GitHub release download failed: %v\n"+
 				"  - Cross-compile unavailable: Go toolchain not found\n"+
@@ -396,7 +520,7 @@ func prepareBinary(host, remoteOS, remoteArch string) (localBin string, remoteBi
 
 	srcDir, err := findSourceDir()
 	if err != nil {
-		return "", "", fmt.Errorf(
+		return "", fmt.Errorf(
 			"cannot obtain cc-clip for %s/%s:\n"+
 				"  - GitHub release download failed: %v\n"+
 				"  - Cross-compile unavailable: source directory not found\n"+
@@ -410,9 +534,9 @@ func prepareBinary(host, remoteOS, remoteArch string) (localBin string, remoteBi
 		fmt.Sprintf("cd %s && GOOS=%s GOARCH=%s go build -o %s ./cmd/cc-clip/",
 			srcDir, remoteOS, remoteArch, tmpBin))
 	if out, err := buildCmd.CombinedOutput(); err != nil {
-		return "", "", fmt.Errorf("cross-compile failed: %s: %w", string(out), err)
+		return "", fmt.Errorf("cross-compile failed: %s: %w", string(out), err)
 	}
-	return tmpBin, remoteBin, nil
+	return tmpBin, nil
 }
 
 func downloadReleaseBinary(targetOS, targetArch string) (string, error) {
@@ -533,7 +657,90 @@ func cmdStatus() {
 		fmt.Printf("token:   present (%d chars)\n", len(tok))
 	}
 
+	tokenDir, dirErr := token.TokenDir()
+	if dirErr == nil {
+		tokenPath := filepath.Join(tokenDir, "session.token")
+		if info, statErr := os.Stat(tokenPath); statErr == nil {
+			age := time.Since(info.ModTime())
+			fmt.Printf("token:   modified %s ago\n", formatStatusDuration(age))
+		}
+	}
+
+	if runtime.GOOS == "darwin" {
+		running, err := service.Status()
+		if err == nil {
+			if running {
+				fmt.Println("launchd: running")
+			} else {
+				fmt.Println("launchd: not running")
+			}
+		} else {
+			fmt.Println("launchd: not installed")
+		}
+	}
+
 	fmt.Printf("out-dir: %s\n", tunnel.DefaultOutDir())
+}
+
+func formatStatusDuration(d time.Duration) string {
+	if d < time.Minute {
+		return fmt.Sprintf("%ds", int(d.Seconds()))
+	}
+	if d < time.Hour {
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	}
+	if d < 24*time.Hour {
+		return fmt.Sprintf("%dh%dm", int(d.Hours()), int(d.Minutes())%60)
+	}
+	days := int(d.Hours()) / 24
+	hours := int(d.Hours()) % 24
+	return fmt.Sprintf("%dd%dh", days, hours)
+}
+
+func cmdService() {
+	if len(os.Args) < 3 {
+		log.Fatal("usage: cc-clip service <install|uninstall|status>")
+	}
+
+	subcmd := os.Args[2]
+	switch subcmd {
+	case "install":
+		exePath, err := os.Executable()
+		if err != nil {
+			log.Fatalf("cannot determine executable path: %v", err)
+		}
+		exePath, err = filepath.EvalSymlinks(exePath)
+		if err != nil {
+			log.Fatalf("cannot resolve executable path: %v", err)
+		}
+		port := getPort()
+		if err := service.Install(exePath, port); err != nil {
+			log.Fatalf("service install failed: %v", err)
+		}
+		fmt.Printf("Launchd service installed and loaded.\n")
+		fmt.Printf("  plist: %s\n", service.PlistPath())
+		fmt.Printf("  logs:  ~/Library/Logs/cc-clip.log\n")
+
+	case "uninstall":
+		if err := service.Uninstall(); err != nil {
+			log.Fatalf("service uninstall failed: %v", err)
+		}
+		fmt.Println("Launchd service unloaded and removed.")
+
+	case "status":
+		running, err := service.Status()
+		if err != nil {
+			log.Fatalf("service status check failed: %v", err)
+		}
+		if running {
+			fmt.Println("service: running (launchd)")
+		} else {
+			fmt.Println("service: not running")
+		}
+
+	default:
+		log.Fatalf("unknown service subcommand: %s (use install, uninstall, or status)", subcmd)
+	}
 }
 
 func classifyError(err error) int {
