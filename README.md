@@ -25,14 +25,14 @@ No changes to Claude Code. No terminal-specific hacks. Just works.
 curl -fsSL https://raw.githubusercontent.com/ShunmeiCho/cc-clip/main/scripts/install.sh | sh
 ```
 
-**2. Start the daemon and connect:**
+**2. Start the daemon:**
 
 ```bash
-# Terminal 1: Start local clipboard daemon
-cc-clip serve
+# Option A: Auto-start via launchd (recommended, macOS)
+cc-clip service install
 
-# Terminal 2: Deploy to your remote server
-cc-clip connect myserver
+# Option B: Manual foreground
+cc-clip serve
 ```
 
 **3. Add SSH port forwarding** (if not already configured):
@@ -45,7 +45,15 @@ Host myserver
 
 > **Important:** If you use `ControlMaster` for SSH connection multiplexing, see [Troubleshooting — SSH ControlMaster](#ssh-controlmaster-breaks-remoteforward) below.
 
-**4. Done.** `Ctrl+V` in remote Claude Code now pastes images from your Mac.
+**4. Deploy to remote:**
+
+```bash
+cc-clip connect myserver
+```
+
+This handles everything in one command: detect arch, upload binary, install shim, sync token, fix PATH, verify tunnel. Subsequent runs are incremental — only changed components are re-deployed.
+
+**5. Done.** `Ctrl+V` in remote Claude Code now pastes images from your Mac.
 
 ## How It Works
 
@@ -64,14 +72,21 @@ Host myserver
 
 | Command | Description |
 |---------|-------------|
-| `cc-clip serve` | Start local clipboard daemon |
-| `cc-clip connect <host>` | Deploy to remote server (one command) |
+| `cc-clip serve` | Start local clipboard daemon (foreground) |
+| `cc-clip serve --rotate-token` | Start daemon with forced new token |
+| `cc-clip service install` | Install macOS launchd service (auto-start, background) |
+| `cc-clip service uninstall` | Remove launchd service |
+| `cc-clip service status` | Show launchd service status |
+| `cc-clip connect <host>` | Deploy to remote server (incremental, one command) |
+| `cc-clip connect <host> --token-only` | Only sync token (fast, no binary upload) |
+| `cc-clip connect <host> --force` | Full redeploy ignoring cached state |
 | `cc-clip install` | Install xclip shim on remote |
 | `cc-clip uninstall` | Remove xclip shim |
+| `cc-clip uninstall --host H` | Remove shim and clean up remote PATH marker |
 | `cc-clip paste` | Manually fetch clipboard image (fallback) |
 | `cc-clip doctor` | Local health check |
 | `cc-clip doctor --host H` | End-to-end health check |
-| `cc-clip status` | Show component status |
+| `cc-clip status` | Show component status (daemon, token, launchd) |
 
 ## Configuration
 
@@ -170,13 +185,15 @@ This ensures every SSH connection creates a fresh tunnel. The trade-off is sligh
 
 **Cause:** Each time `cc-clip serve` starts, it generates a **new token**. The remote server still has the old token from the previous session.
 
-**Fix:** Re-run `cc-clip connect <host>` after every daemon restart to sync the new token.
+**Fix (recommended):** Use `cc-clip service install` to run the daemon via launchd. The daemon auto-restarts and tokens are persisted with a 12h TTL — restarts reuse the existing token if it hasn't expired.
 
-**Tip:** Run the daemon in the background so it survives terminal closes:
+**Fix (manual):** If the token did change, sync it without re-uploading the binary:
 
 ```bash
-nohup cc-clip serve > /tmp/cc-clip.log 2>&1 &
+cc-clip connect <host> --token-only
 ```
+
+To force a new token: `cc-clip serve --rotate-token`.
 
 ### Remote `xclip` Not Installed
 
@@ -199,7 +216,7 @@ Then re-run `cc-clip connect <host>` to re-detect the real binary path.
 
 **Cause:** The shim is installed to `~/.local/bin/` but it's not first in PATH, so the system uses `/usr/bin/xclip` instead.
 
-**Fix:** Add to your remote `~/.bashrc` (or `~/.zshrc`):
+**Fix:** `cc-clip connect` now auto-detects your remote shell (bash/zsh) and injects a PATH marker into the appropriate rc file. If auto-fix didn't work, add manually to your remote `~/.bashrc` (or `~/.zshrc`):
 
 ```bash
 export PATH="$HOME/.local/bin:$PATH"
