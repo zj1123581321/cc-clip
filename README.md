@@ -234,11 +234,11 @@ The following are known pain points that we plan to improve iteratively:
 
 | Issue | Description | Status |
 |-------|-------------|--------|
-| Token re-sync on daemon restart | Every `cc-clip serve` restart generates a new token, requiring a full `cc-clip connect` to re-sync | Planned |
-| Full redeploy on every `connect` | `connect` re-compiles and re-uploads the binary even when only the token changed | Planned |
-| SSH passphrase prompted multiple times | `connect` makes multiple SSH calls internally, each prompting for passphrase | Planned |
-| Remote PATH not auto-configured | `connect` detects `~/.local/bin` not in PATH but doesn't fix it automatically | Planned |
-| No daemon auto-start | Daemon runs in foreground; `nohup` is a workaround, no launchd/systemd integration yet | Planned |
+| Token re-sync on daemon restart | Every `cc-clip serve` restart generates a new token, requiring a full `cc-clip connect` to re-sync | ✅ Fixed — token persistence with TTL, `--token-only` flag |
+| Full redeploy on every `connect` | `connect` re-compiles and re-uploads the binary even when only the token changed | ✅ Fixed — incremental deploy with hash-based skip |
+| SSH passphrase prompted multiple times | `connect` makes multiple SSH calls internally, each prompting for passphrase | ✅ Fixed — SSH ControlMaster session reuse |
+| Remote PATH not auto-configured | `connect` detects `~/.local/bin` not in PATH but doesn't fix it automatically | ✅ Fixed — auto-detect shell and inject PATH marker |
+| No daemon auto-start | Daemon runs in foreground; `nohup` is a workaround, no launchd/systemd integration yet | ✅ Fixed — `cc-clip service install` for macOS launchd |
 
 Contributions and ideas welcome — see [Issues](https://github.com/ShunmeiCho/cc-clip/issues).
 
