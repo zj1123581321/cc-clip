@@ -85,9 +85,8 @@ main() {
 
     echo ""
     echo "Quick start:"
-    echo "  1. cc-clip serve          # Start local daemon"
-    echo "  2. cc-clip connect HOST   # Deploy to remote server"
-    echo "  3. Ctrl+V in remote Claude Code"
+    echo "  cc-clip setup HOST        # One command: deps, daemon, deploy"
+    echo "  Ctrl+V in remote Claude Code"
 }
 
 main
