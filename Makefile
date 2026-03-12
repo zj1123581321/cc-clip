@@ -7,6 +7,9 @@ PLATFORMS := darwin/amd64 darwin/arm64 linux/amd64 linux/arm64
 
 build:
 	go build $(LDFLAGS) -o $(BINARY) ./cmd/cc-clip/
+	@if [ "$$(uname -s)" = "Darwin" ]; then \
+		codesign --force --sign - --identifier com.cc-clip.cli $(BINARY); \
+	fi
 
 test:
 	go test ./... -count=1
@@ -26,6 +29,10 @@ release-local: clean
 		output=dist/$(BINARY)-$${os}-$${arch}; \
 		echo "Building $$platform..."; \
 		GOOS=$$os GOARCH=$$arch go build $(LDFLAGS) -o $$output ./cmd/cc-clip/; \
+		if [ "$$os" = "darwin" ] && [ "$$(uname -s)" = "Darwin" ]; then \
+			echo "  Signing $$output..."; \
+			codesign --force --sign - --identifier com.cc-clip.cli $$output; \
+		fi; \
 	done
 	@echo "Binaries in dist/"
 	@ls -lh dist/

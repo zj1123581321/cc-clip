@@ -74,10 +74,13 @@ main() {
     cp "${TMP_DIR}/cc-clip" "${INSTALL_DIR}/cc-clip"
     chmod +x "${INSTALL_DIR}/cc-clip"
 
-    # Remove macOS quarantine attribute to prevent Gatekeeper from killing the binary.
-    # Downloaded files get com.apple.quarantine which causes "zsh: killed" on unsigned binaries.
+    # macOS Gatekeeper fix: downloaded binaries are blocked in two ways:
+    # 1. com.apple.quarantine / com.apple.provenance extended attributes
+    # 2. Missing or invalid code signature (Identifier=a.out)
+    # Clear all xattrs and re-sign with proper identifier to satisfy Gatekeeper.
     if [ "$(uname -s)" = "Darwin" ]; then
-        xattr -d com.apple.quarantine "${INSTALL_DIR}/cc-clip" 2>/dev/null || true
+        xattr -cr "${INSTALL_DIR}/cc-clip" 2>/dev/null || true
+        codesign --force --sign - --identifier com.cc-clip.cli "${INSTALL_DIR}/cc-clip" 2>/dev/null || true
     fi
 
     echo ""
