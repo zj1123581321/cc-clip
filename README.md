@@ -91,6 +91,17 @@ This single command:
 3. Starts the local daemon (via macOS launchd)
 4. Deploys the binary and shim to the remote server
 
+> **If setup reports an error**, read the error message carefully — it includes specific instructions for how to fix the issue. For example, if `Xvfb` is not found on the remote server and auto-install fails, you will see the exact command to run:
+>
+> ```bash
+> # SSH into your server and install manually:
+> ssh myserver
+> sudo apt install xvfb          # Debian/Ubuntu
+> sudo dnf install xorg-x11-server-Xvfb   # RHEL/Fedora
+> ```
+>
+> After fixing, re-run `cc-clip setup myserver --codex`.
+
 ### Step 3: Connect and use
 
 Open a **new** SSH session to your server (the tunnel activates on SSH connection):
