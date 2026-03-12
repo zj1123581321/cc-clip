@@ -33,20 +33,82 @@ Codex CLI:    Mac clipboard → cc-clip daemon → SSH tunnel → x11-bridge/Xvf
 
 One command. No changes to Claude Code or Codex. No terminal-specific hacks. Works everywhere.
 
+## Prerequisites
+
+- **Local machine:** macOS 13+ (Apple Silicon or Intel)
+- **Remote server:** Linux (amd64 or arm64) accessible via SSH
+- **SSH config:** You must have a Host entry in `~/.ssh/config` for your remote server
+
+If you don't have an SSH config entry yet, add one:
+
+```
+# ~/.ssh/config
+Host myserver
+    HostName 10.0.0.1       # your server's IP or domain
+    User your-username
+    IdentityFile ~/.ssh/id_rsa  # optional, if using key auth
+```
+
 ## Quick Start
 
-```bash
-# Install
-curl -fsSL https://raw.githubusercontent.com/ShunmeiCho/cc-clip/main/scripts/install.sh | sh
+### Step 1: Install cc-clip
 
-# Setup for Claude Code (one command does everything)
+```bash
+curl -fsSL https://raw.githubusercontent.com/ShunmeiCho/cc-clip/main/scripts/install.sh | sh
+```
+
+After installation, add `~/.local/bin` to your PATH if prompted:
+
+```bash
+# Add to your shell profile (~/.zshrc or ~/.bashrc)
+export PATH="$HOME/.local/bin:$PATH"
+
+# Reload your shell
+source ~/.zshrc  # or: source ~/.bashrc
+```
+
+Verify the installation:
+
+```bash
+cc-clip --version
+```
+
+> **macOS "killed" error?** If you see `zsh: killed cc-clip`, macOS Gatekeeper is blocking the binary. Fix: `xattr -d com.apple.quarantine ~/.local/bin/cc-clip`
+
+### Step 2: Setup (one command)
+
+```bash
+# For Claude Code only
 cc-clip setup myserver
 
-# Setup for both Claude Code + Codex CLI
+# For both Claude Code + Codex CLI
 cc-clip setup myserver --codex
 ```
 
-Done. `Ctrl+V` in remote Claude Code and Codex CLI now pastes images from your Mac.
+This single command:
+1. Installs local dependencies (`pngpaste`)
+2. Configures SSH (`RemoteForward`, `ControlMaster no`)
+3. Starts the local daemon (via macOS launchd)
+4. Deploys the binary and shim to the remote server
+
+### Step 3: Connect and use
+
+Open a **new** SSH session to your server (the tunnel activates on SSH connection):
+
+```bash
+ssh myserver
+```
+
+Then use Claude Code or Codex CLI as normal — `Ctrl+V` now pastes images from your Mac clipboard.
+
+> **Important:** The image paste works through the SSH tunnel. You must connect via `ssh myserver` (the host you set up). The tunnel is established on each SSH connection.
+
+### Verify it works
+
+```bash
+# Copy an image to your Mac clipboard first (Cmd+Shift+Ctrl+4), then:
+cc-clip doctor --host myserver
+```
 
 ## Why cc-clip?
 
@@ -61,12 +123,12 @@ Done. `Ctrl+V` in remote Claude Code and Codex CLI now pastes images from your M
 
 ```mermaid
 graph LR
-    subgraph local ["🖥 Mac (local)"]
-        A["📋 Clipboard"] --> B["pngpaste"]
+    subgraph local ["Local Mac"]
+        A["Clipboard"] --> B["pngpaste"]
         B --> C["cc-clip daemon<br/>127.0.0.1:18339"]
     end
 
-    subgraph remote ["🐧 Linux (remote)"]
+    subgraph remote ["Remote Linux"]
         F["Claude Code"] -- "Ctrl+V" --> E["xclip shim"]
         E -- "curl" --> D["127.0.0.1:18339"]
         G["Codex CLI"] -- "Ctrl+V / arboard" --> H["Xvfb CLIPBOARD"]
@@ -97,19 +159,46 @@ graph LR
 | Token delivery | Via stdin, never in command-line args |
 | Transparency | Non-image calls pass through to real `xclip` unchanged |
 
+## Daily Usage
+
+After initial setup, your daily workflow is:
+
+```bash
+# 1. SSH to your server (tunnel activates automatically)
+ssh myserver
+
+# 2. Use Claude Code or Codex CLI normally
+claude          # Claude Code
+codex           # Codex CLI
+
+# 3. Ctrl+V pastes images from your Mac clipboard
+```
+
+The local daemon runs as a macOS launchd service and starts automatically on login. No need to re-run setup.
+
+**Reconnecting after reboot or network change:**
+
+```bash
+# If image paste stops working, re-sync the token:
+cc-clip connect myserver --token-only
+
+# Full health check:
+cc-clip doctor --host myserver
+```
+
 ## Commands
 
 | Command | Description |
 |---------|-------------|
 | `cc-clip setup <host>` | **Full setup**: deps, SSH config, daemon, deploy |
+| `cc-clip setup <host> --codex` | Full setup with Codex CLI support |
 | `cc-clip connect <host>` | Deploy to remote (incremental) |
 | `cc-clip connect <host> --token-only` | Sync token only (fast) |
+| `cc-clip connect <host> --force` | Full redeploy ignoring cache |
 | `cc-clip doctor --host <host>` | End-to-end health check |
 | `cc-clip status` | Show local component status |
 | `cc-clip service install` | Install macOS launchd service |
 | `cc-clip service uninstall` | Remove launchd service |
-| `cc-clip connect <host> --codex` | Deploy with Codex CLI support |
-| `cc-clip uninstall --codex --host <host>` | Remove Codex support from remote |
 
 <details>
 <summary>All commands</summary>
@@ -183,7 +272,47 @@ cc-clip doctor --host myserver
 ```
 
 <details>
-<summary><b>Step-by-step verification</b></summary>
+<summary><b>"zsh: killed" after installation</b></summary>
+
+**Symptom:** Running any `cc-clip` command immediately shows `zsh: killed cc-clip ...`
+
+**Cause:** macOS Gatekeeper blocks unsigned binaries downloaded from the internet.
+
+**Fix:**
+
+```bash
+xattr -d com.apple.quarantine ~/.local/bin/cc-clip
+```
+
+Or reinstall (the latest install script handles this automatically):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ShunmeiCho/cc-clip/main/scripts/install.sh | sh
+```
+
+</details>
+
+<details>
+<summary><b>"cc-clip: command not found"</b></summary>
+
+**Cause:** `~/.local/bin` is not in your PATH.
+
+**Fix:**
+
+```bash
+# Add to your shell profile
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc
+source ~/.zshrc
+```
+
+Replace `~/.zshrc` with `~/.bashrc` if you use bash.
+
+</details>
+
+<details>
+<summary><b>Ctrl+V doesn't paste images (Claude Code)</b></summary>
+
+**Step-by-step verification:**
 
 ```bash
 # 1. Local: Is the daemon running?
@@ -199,14 +328,19 @@ ssh myserver "which xclip"
 # Expected: ~/.local/bin/xclip  (NOT /usr/bin/xclip)
 
 # 4. Remote: Does the shim intercept correctly?
+# (copy an image to Mac clipboard first)
 ssh myserver 'CC_CLIP_DEBUG=1 xclip -selection clipboard -t TARGETS -o'
 # Expected: image/png
 ```
 
+If step 2 fails, you need to open a **new** SSH connection (the tunnel is established on connect).
+
+If step 3 fails, the PATH fix didn't take effect. Log out and back in, or run: `source ~/.bashrc`
+
 </details>
 
 <details>
-<summary><b>Codex CLI: verify clipboard bridge</b></summary>
+<summary><b>Ctrl+V doesn't paste images (Codex CLI)</b></summary>
 
 ```bash
 # 1. Check DISPLAY is set (open a new SSH session first)
@@ -221,6 +355,8 @@ ssh myserver 'DISPLAY=:0 xclip -selection clipboard -t TARGETS -o'
 # Expected: image/png (when Mac clipboard has an image)
 ```
 
+If DISPLAY is empty, open a **new** SSH session — the DISPLAY env var is set in your shell rc file.
+
 </details>
 
 <details>
@@ -228,7 +364,15 @@ ssh myserver 'DISPLAY=:0 xclip -selection clipboard -t TARGETS -o'
 
 **Symptom:** Tunnel works during `connect`, but `curl http://127.0.0.1:18339/health` hangs in your SSH session.
 
-**Fix:** `cc-clip setup` auto-configures this. If you set up SSH manually, add `ControlMaster no` for the host.
+**Cause:** An existing SSH ControlMaster connection was reused without `RemoteForward`.
+
+**Fix:** `cc-clip setup` auto-configures this. If you set up SSH manually, add to `~/.ssh/config`:
+
+```
+Host myserver
+    ControlMaster no
+    ControlPath none
+```
 
 </details>
 
@@ -237,7 +381,14 @@ ssh myserver 'DISPLAY=:0 xclip -selection clipboard -t TARGETS -o'
 
 **Symptom:** `Warning: remote port forwarding failed for listen port 18339`
 
-**Fix:** Kill the stale process on remote: `sudo ss -tlnp | grep 18339` then `sudo kill <PID>`.
+**Fix:** Kill the stale process on remote:
+
+```bash
+sudo ss -tlnp | grep 18339     # find the PID
+sudo kill <PID>                  # kill it
+```
+
+Then reconnect: `ssh myserver`
 
 </details>
 
@@ -254,6 +405,23 @@ Token uses sliding expiration — auto-renews on every use. Only expires after 3
 <summary><b>Launchd daemon can't find pngpaste</b></summary>
 
 **Fix:** `cc-clip service uninstall && cc-clip service install` (regenerates plist with correct PATH).
+
+</details>
+
+<details>
+<summary><b>Setup fails: "killed" during re-deployment</b></summary>
+
+**Symptom:** `cc-clip setup` was working before, but now shows `zsh: killed` when re-running.
+
+**Cause:** The launchd service is running the old binary. Replacing the binary while the daemon holds it open can cause conflicts.
+
+**Fix:**
+
+```bash
+cc-clip service uninstall
+curl -fsSL https://raw.githubusercontent.com/ShunmeiCho/cc-clip/main/scripts/install.sh | sh
+cc-clip setup myserver
+```
 
 </details>
 
