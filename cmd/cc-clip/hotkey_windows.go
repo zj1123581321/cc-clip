@@ -119,6 +119,12 @@ func cmdHotkey() {
 		DelayMS:   *delayMS,
 		Hotkey:    *hotkeyValue,
 	}
+	normalizeHotkeyConfig(&cfg)
+	binding, err := parseHotkey(cfg.Hotkey)
+	if err != nil {
+		log.Fatalf("failed to parse hotkey: %v", err)
+	}
+	cfg.Hotkey = binding.String()
 	if err := saveHotkeyConfig(cfg); err != nil {
 		log.Fatalf("failed to save hotkey config: %v", err)
 	}
