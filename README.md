@@ -187,6 +187,29 @@ codex           # Codex CLI
 
 The local daemon runs as a macOS launchd service and starts automatically on login. No need to re-run setup.
 
+### Windows workflow
+
+On Windows, some `Windows Terminal -> SSH -> tmux -> Claude Code` combinations do not trigger the remote `xclip` path when you press `Alt+V` or `Ctrl+V`. `cc-clip` therefore also provides a Windows-native workflow that does not depend on remote clipboard interception:
+
+```bash
+# Start a background Alt+V listener for one remote host
+cc-clip hotkey myserver
+```
+
+After that:
+
+1. Copy or screenshot an image on Windows
+2. Focus your SSH/tmux Claude Code window
+3. Press `Alt+V`
+
+`cc-clip` uploads the local clipboard image to the remote host, pastes the remote file path into the active terminal, and restores your original clipboard image.
+
+Manual fallback:
+
+```bash
+cc-clip send myserver --paste
+```
+
 **Reconnecting after reboot or network change:**
 
 ```bash
@@ -210,6 +233,8 @@ cc-clip doctor --host myserver
 | `cc-clip status` | Show local component status |
 | `cc-clip service install` | Install macOS launchd service |
 | `cc-clip service uninstall` | Remove launchd service |
+| `cc-clip send <host> --paste` | Windows: upload clipboard image and paste remote path |
+| `cc-clip hotkey <host>` | Windows: register background `Alt+V` upload/paste flow |
 
 <details>
 <summary>All commands</summary>
@@ -227,6 +252,11 @@ cc-clip doctor --host myserver
 | `cc-clip service install` | Install macOS launchd service |
 | `cc-clip service uninstall` | Remove launchd service |
 | `cc-clip service status` | Show service status |
+| `cc-clip send <host>` | Upload clipboard image to a remote file |
+| `cc-clip send <host> --paste` | Windows: paste the uploaded remote path into the active window |
+| `cc-clip hotkey <host>` | Windows: run a background `Alt+V` listener |
+| `cc-clip hotkey --status` | Windows: show hotkey status |
+| `cc-clip hotkey --stop` | Windows: stop the hotkey listener |
 | `cc-clip doctor` | Local health check |
 | `cc-clip doctor --host <host>` | End-to-end health check |
 | `cc-clip status` | Show component status |
@@ -266,6 +296,7 @@ All settings have sensible defaults. Override via environment variables:
 |-------|--------|--------|
 | macOS (Apple Silicon) | Linux (amd64) | Stable |
 | macOS (Intel) | Linux (arm64) | Stable |
+| Windows 10/11 | Linux (amd64/arm64) | Experimental (`send` / `hotkey`) |
 
 ## Requirements
 
@@ -347,6 +378,26 @@ ssh myserver 'CC_CLIP_DEBUG=1 xclip -selection clipboard -t TARGETS -o'
 If step 2 fails, you need to open a **new** SSH connection (the tunnel is established on connect).
 
 If step 3 fails, the PATH fix didn't take effect. Log out and back in, or run: `source ~/.bashrc`
+
+</details>
+
+<details>
+<summary><b>New SSH tab says "remote port forwarding failed for listen port 18339"</b></summary>
+
+**Symptom:** A newly opened SSH tab warns `remote port forwarding failed for listen port 18339`, and image paste in that tab does nothing.
+
+**Cause:** `cc-clip` uses a fixed remote port (`18339`) for the reverse tunnel. If another SSH session to the same host already owns that port, or a stale `sshd` child is still holding it, the new tab cannot establish its own tunnel.
+
+**Fix:**
+
+```bash
+# Inspect the remote port without opening another forward:
+ssh -o ClearAllForwardings=yes myserver "ss -tln | grep 18339 || true"
+```
+
+- If another live SSH tab already owns the tunnel, use that tab/session, or close it before opening a new one.
+- If the port is stuck after a disconnect, follow the stale `sshd` cleanup steps below.
+- If you truly need multiple concurrent SSH sessions with image paste, give each host alias a different `cc-clip` port instead of sharing `18339`.
 
 </details>
 

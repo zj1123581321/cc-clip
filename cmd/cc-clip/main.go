@@ -41,6 +41,10 @@ func main() {
 		cmdServe()
 	case "paste":
 		cmdPaste()
+	case "send":
+		cmdSend()
+	case "hotkey":
+		cmdHotkey()
 	case "install":
 		cmdInstall()
 	case "uninstall":
@@ -91,6 +95,17 @@ Remote:
     --host           Also clean up PATH marker on remote host
   paste              Fetch clipboard image and output path
     --out-dir        Output directory (env: CC_CLIP_OUT_DIR)
+  send <host>        Upload local clipboard image to remote file path
+    --file           Upload this image file instead of reading the clipboard
+    --remote-dir     Remote directory (default: ~/.cache/cc-clip/uploads)
+    --paste          On Windows, paste the remote path into the active window
+    --delay-ms       Delay before Ctrl+Shift+V when --paste is used (default: 150)
+    --no-restore     Do not restore the original image clipboard after --paste
+  hotkey <host>      Windows global Alt+V listener for send --paste
+    --remote-dir     Remote directory (default: ~/.cache/cc-clip/uploads)
+    --delay-ms       Delay before Ctrl+Shift+V after Alt+V (default: 150)
+    --stop           Stop the background hotkey process
+    --status         Show hotkey process status
 
 One-command setup:
   setup <host>       Full setup: deps, SSH config, daemon, deploy
@@ -429,7 +444,6 @@ func cmdUninstallCodexLocal() {
 
 	fmt.Println("Codex support removed (local).")
 }
-
 
 type connectOpts struct {
 	host      string

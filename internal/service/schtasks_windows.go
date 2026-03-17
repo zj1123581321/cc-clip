@@ -42,9 +42,10 @@ func vbsPath() string {
 
 // generateVBS creates a VBScript that launches cc-clip serve with no visible window.
 func generateVBS(binaryPath string, port int) string {
+	logFile := logPath()
 	return fmt.Sprintf(`Set WshShell = CreateObject("WScript.Shell")
-WshShell.Run """%s"" serve --port %d", 0, False
-`, binaryPath, port)
+WshShell.Run "cmd.exe /c """"%s"" serve --port %d >> ""%s"" 2>&1""", 0, False
+`, binaryPath, port, logFile)
 }
 
 // regAdd adds a registry value. Overridable for testing.
