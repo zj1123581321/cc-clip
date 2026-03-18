@@ -165,7 +165,10 @@ func startHotkeyBackground(host, remoteDir, hotkey string, delayMS int) {
 		"--run-loop",
 	}
 	cmd := exec.Command(exe, args...)
-	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		HideWindow:    true,
+		CreationFlags: 0x00000008 | 0x00000200, // DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
+	}
 	if err := cmd.Start(); err != nil {
 		log.Fatalf("failed to start hotkey process: %v", err)
 	}
@@ -185,24 +188,52 @@ func runHotkeyLoop(host, remoteDir, hotkey string, delay time.Duration) {
 	}
 	defer os.Remove(hotkeyPIDPath())
 
+	// Remove stale stop file from a previous Quit that was followed by a manual restart
+	os.Remove(hotkeyStopFilePath())
+
 	binding, err := parseHotkey(hotkey)
 	if err != nil {
 		log.Fatalf("hotkey: invalid hotkey %q: %v", hotkey, err)
 	}
 
+	cfg := hotkeyConfig{
+		Host:      host,
+		RemoteDir: remoteDir,
+		DelayMS:   int(delay / time.Millisecond),
+		Hotkey:    hotkey,
+	}
+
 	log.Printf("hotkey: starting for host=%s remote_dir=%s hotkey=%s", host, remoteDir, binding.String())
+
+	// Create tray (this also calls runtime.LockOSThread)
+	tray, err := newTray(cfg, binding, defaultDaemonPort())
+	if err != nil {
+		log.Printf("hotkey: tray creation failed (continuing without tray): %v", err)
+	}
+
+	var trayHwnd uintptr
+	if tray != nil {
+		if err := tray.show(); err != nil {
+			log.Printf("hotkey: tray show failed: %v", err)
+		} else {
+			trayHwnd = tray.hwnd
+			defer tray.remove()
+		}
+	}
 
 	user32 := syscall.NewLazyDLL("user32.dll")
 	registerHotKey := user32.NewProc("RegisterHotKey")
 	unregisterHotKey := user32.NewProc("UnregisterHotKey")
 	getMessage := user32.NewProc("GetMessageW")
+	translateMessage := user32.NewProc("TranslateMessage")
+	dispatchMessage := user32.NewProc("DispatchMessageW")
 
 	const hotkeyID = 1
-	r1, _, err := registerHotKey.Call(0, hotkeyID, uintptr(binding.modifiers|modNoRepeat), uintptr(binding.key))
+	r1, _, regErr := registerHotKey.Call(trayHwnd, hotkeyID, uintptr(binding.modifiers|modNoRepeat), uintptr(binding.key))
 	if r1 == 0 {
-		log.Fatalf("hotkey: RegisterHotKey failed: %v", err)
+		log.Fatalf("hotkey: RegisterHotKey failed: %v", regErr)
 	}
-	defer unregisterHotKey.Call(0, hotkeyID)
+	defer unregisterHotKey.Call(trayHwnd, hotkeyID)
 	log.Printf("hotkey: registered %s", binding.String())
 
 	var m msg
@@ -217,29 +248,28 @@ func runHotkeyLoop(host, remoteDir, hotkey string, delay time.Duration) {
 			return
 		}
 
-		if m.message != wmHotkey {
-			continue
-		}
-		if hotkeyRunning.Swap(true) {
-			log.Printf("hotkey: ignored repeated %s while previous send is still running", binding.String())
-			continue
-		}
-
-		go func() {
-			defer hotkeyRunning.Store(false)
-			if err := handleHotkeyPress(host, remoteDir, binding, delay); err != nil {
-				log.Printf("hotkey: send failed: %v", err)
-				return
-			}
-			log.Printf("hotkey: send completed")
-		}()
+		translateMessage.Call(uintptr(unsafe.Pointer(&m)))
+		dispatchMessage.Call(uintptr(unsafe.Pointer(&m)))
 	}
 }
 
 func handleHotkeyPress(host, remoteDir string, binding hotkeyBinding, delay time.Duration) error {
 	log.Printf("hotkey: %s pressed", binding.String())
+
+	tray := globalTray
+	if tray != nil {
+		tray.showBalloon("cc-clip", "Uploading clipboard image...", niifInfo)
+	}
+
 	result, err := uploadImage(host, remoteDir, "")
 	if err != nil {
+		if tray != nil {
+			if strings.Contains(err.Error(), "no image in clipboard") {
+				tray.showBalloon("cc-clip", "No image in clipboard", niifWarning)
+			} else {
+				tray.showBalloon("cc-clip", "Send failed: "+err.Error(), niifError)
+			}
+		}
 		return err
 	}
 	defer func() {
@@ -249,7 +279,18 @@ func handleHotkeyPress(host, remoteDir string, binding hotkeyBinding, delay time
 	}()
 
 	log.Printf("hotkey: uploaded %s", result.RemotePath)
-	return pasteRemotePath(result.RemotePath, result.LocalImagePath, delay, true)
+
+	if err := pasteRemotePath(result.RemotePath, result.LocalImagePath, delay, true); err != nil {
+		if tray != nil {
+			tray.showBalloon("cc-clip", "Paste failed: "+err.Error(), niifError)
+		}
+		return err
+	}
+
+	if tray != nil {
+		tray.showBalloon("cc-clip", "Image pasted to "+host, niifInfo)
+	}
+	return nil
 }
 
 func printHotkeyStatus() {

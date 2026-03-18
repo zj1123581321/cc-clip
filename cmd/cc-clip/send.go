@@ -234,6 +234,7 @@ func writeTempImage(data []byte, ext string) (string, error) {
 
 func remoteExecNoForward(host, cmd string) (string, error) {
 	c := exec.Command("ssh", "-o", "ClearAllForwardings=yes", host, cmd)
+	hideConsoleWindow(c)
 	out, err := c.CombinedOutput()
 	if err != nil {
 		return strings.TrimSpace(string(out)), fmt.Errorf("%s", strings.TrimSpace(string(out)))
@@ -243,6 +244,7 @@ func remoteExecNoForward(host, cmd string) (string, error) {
 
 func scpUploadNoForward(host, localPath, remotePath string) error {
 	c := exec.Command("scp", "-o", "ClearAllForwardings=yes", localPath, fmt.Sprintf("%s:%s", host, remotePath))
+	hideConsoleWindow(c)
 	if out, err := c.CombinedOutput(); err != nil {
 		return fmt.Errorf("%s", strings.TrimSpace(string(out)))
 	}

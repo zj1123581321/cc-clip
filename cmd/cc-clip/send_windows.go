@@ -6,8 +6,16 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"syscall"
 	"time"
 )
+
+// hiddenExec creates an exec.Cmd that won't flash a console window.
+func hiddenExec(name string, args ...string) *exec.Cmd {
+	cmd := exec.Command(name, args...)
+	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: 0x08000000} // CREATE_NO_WINDOW
+	return cmd
+}
 
 func defaultRemoteHost() (string, bool, error) {
 	cfg, ok, err := loadHotkeyConfig()
@@ -45,7 +53,7 @@ func pasteRemotePath(remotePath, imagePath string, delay time.Duration, restoreC
 
 func windowsSetClipboardText(text string) error {
 	script := `Set-Clipboard -Value $env:CC_CLIP_TEXT`
-	cmd := exec.Command("powershell", "-STA", "-NoProfile", "-Command", script)
+	cmd := hiddenExec("powershell", "-STA", "-NoProfile", "-Command", script)
 	cmd.Env = append(os.Environ(), "CC_CLIP_TEXT="+text)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("failed to set text clipboard: %s: %w", string(out), err)
@@ -63,7 +71,7 @@ try {
 } finally {
   $img.Dispose()
 }`
-	cmd := exec.Command("powershell", "-STA", "-NoProfile", "-Command", script)
+	cmd := hiddenExec("powershell", "-STA", "-NoProfile", "-Command", script)
 	cmd.Env = append(os.Environ(), "CC_CLIP_IMAGE_PATH="+imagePath)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("failed to restore image clipboard: %s: %w", string(out), err)
@@ -73,7 +81,7 @@ try {
 
 func windowsSendCtrlShiftV() error {
 	script := `Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.SendKeys]::SendWait('^+v')`
-	cmd := exec.Command("powershell", "-STA", "-NoProfile", "-Command", script)
+	cmd := hiddenExec("powershell", "-STA", "-NoProfile", "-Command", script)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("failed to send Ctrl+Shift+V: %s: %w", string(out), err)
 	}

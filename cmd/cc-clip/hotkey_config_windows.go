@@ -149,9 +149,22 @@ func installHotkeyAutostart() error {
 	if err := os.MkdirAll(filepath.Dir(logFile), 0755); err != nil {
 		return fmt.Errorf("cannot create hotkey log directory: %w", err)
 	}
+	stopFile := hotkeyStopFilePath()
 	content := fmt.Sprintf(`Set WshShell = CreateObject("WScript.Shell")
-WshShell.Run "cmd.exe /c """"%s"" hotkey --run-loop >> ""%s"" 2>&1""", 0, False
-`, exe, logFile)
+Set fso = CreateObject("Scripting.FileSystemObject")
+Do
+  If fso.FileExists("%s") Then
+    fso.DeleteFile "%s", True
+    Exit Do
+  End If
+  WshShell.Run "cmd.exe /c """"%s"" hotkey --run-loop >> ""%s"" 2>&1""", 0, True
+  If fso.FileExists("%s") Then
+    fso.DeleteFile "%s", True
+    Exit Do
+  End If
+  WScript.Sleep 5000
+Loop
+`, stopFile, stopFile, exe, logFile, stopFile, stopFile)
 	if err := os.WriteFile(vbsPath, []byte(content), 0644); err != nil {
 		return fmt.Errorf("cannot write hotkey launcher: %w", err)
 	}
