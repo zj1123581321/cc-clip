@@ -50,6 +50,10 @@ Host myserver
     IdentityFile ~/.ssh/id_rsa  # optional, if using key auth
 ```
 
+If you are on Windows and want the SSH/Claude Code workflow, use the dedicated guide:
+
+- [Windows Quick Start](docs/windows-quickstart.md)
+
 ## Quick Start
 
 ### Step 1: Install cc-clip
@@ -62,9 +66,9 @@ curl -fsSL https://raw.githubusercontent.com/ShunmeiCho/cc-clip/main/scripts/ins
 
 Windows:
 
-1. Download the latest `cc-clip_<version>_windows_amd64.zip` or `cc-clip_<version>_windows_arm64.zip` from [Releases](https://github.com/ShunmeiCho/cc-clip/releases)
-2. Extract `cc-clip.exe`
-3. Add the extracted directory to your `PATH`
+Follow the dedicated guide:
+
+- [Windows Quick Start](docs/windows-quickstart.md)
 
 On macOS / Linux, add `~/.local/bin` to your PATH if prompted:
 
@@ -115,19 +119,9 @@ This single command:
 
 Windows:
 
-```bash
-# Start the default remote hotkey workflow for one remote host
-cc-clip hotkey myserver
+Use the dedicated guide:
 
-# Optional: start automatically after login
-cc-clip hotkey myserver --enable-autostart
-```
-
-This workflow:
-1. Reads the image from your Windows clipboard
-2. Uploads it to the remote host over SSH/SCP
-3. Pastes the remote file path into the active Claude Code window
-4. Restores your original clipboard image
+- [Windows Quick Start](docs/windows-quickstart.md)
 
 ### Step 3: Connect and use
 
@@ -145,19 +139,9 @@ Then use Claude Code or Codex CLI as normal — `Ctrl+V` now pastes images from 
 
 Windows:
 
-Open your usual SSH session to the server and run Claude Code inside it. Then:
+See:
 
-```text
-1. Copy or screenshot an image on Windows
-2. Focus the SSH/tmux Claude Code window
-3. Press Alt+Shift+V
-```
-
-`cc-clip` uploads the image and pastes the remote file path into the active terminal. If you prefer a manual command instead of the background hotkey:
-
-```bash
-cc-clip send myserver --paste
-```
+- [Windows Quick Start](docs/windows-quickstart.md)
 
 ### Verify it works
 
@@ -168,9 +152,7 @@ cc-clip doctor --host myserver
 
 On Windows, the equivalent quick check is:
 
-```bash
-cc-clip hotkey --status
-```
+- [Windows Quick Start](docs/windows-quickstart.md)
 
 ## Why cc-clip?
 
@@ -245,58 +227,13 @@ The local daemon runs as a macOS launchd service and starts automatically on log
 
 ### Windows workflow
 
-On Windows, some `Windows Terminal -> SSH -> tmux -> Claude Code` combinations do not trigger the remote `xclip` path when you press `Alt+V` or `Ctrl+V`. `cc-clip` therefore provides a Windows-native workflow that does not depend on remote clipboard interception:
+On Windows, some `Windows Terminal -> SSH -> tmux -> Claude Code` combinations do not trigger the remote `xclip` path when you press `Alt+V` or `Ctrl+V`. `cc-clip` therefore provides a Windows-native workflow that does not depend on remote clipboard interception.
 
-```bash
-# Start a background Alt+Shift+V listener for one remote host
-cc-clip hotkey myserver
-```
+For first-time setup and day-to-day usage, use:
 
-After that:
+- [Windows Quick Start](docs/windows-quickstart.md)
 
-1. Copy or screenshot an image on Windows
-2. Focus your SSH/tmux Claude Code window
-3. Press `Alt+Shift+V`
-
-`cc-clip` uploads the local clipboard image to the remote host, pastes the remote file path into the active terminal, and restores your original clipboard image.
-
-The first successful `cc-clip hotkey myserver` run also saves that host as the default target, so future starts can simply use:
-
-```bash
-cc-clip hotkey
-```
-
-To keep the hotkey listener running across logins:
-
-```bash
-cc-clip hotkey myserver --enable-autostart
-```
-
-To use a different hotkey:
-
-```bash
-cc-clip hotkey myserver --hotkey ctrl+alt+v
-```
-
-Manual fallback:
-
-```bash
-# Uses the saved default host if you already configured `cc-clip hotkey myserver`
-cc-clip send --paste
-
-# Or specify the host explicitly
-cc-clip send myserver --paste
-```
-
-**Reconnecting after reboot or network change:**
-
-```bash
-# If image paste stops working, re-sync the token:
-cc-clip connect myserver --token-only
-
-# Full health check:
-cc-clip doctor --host myserver
-```
+The Windows workflow uses a dedicated remote-paste hotkey (default: `Alt+Shift+V`) so it does not collide with local Claude Code's native `Alt+V`.
 
 ## Commands
 
