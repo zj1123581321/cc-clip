@@ -18,9 +18,10 @@ import (
 
 // Win32 constants
 const (
-	wmApp     = 0x8000
-	wmTray    = wmApp + 1
-	wmCommand = 0x0111
+	wmApp          = 0x8000
+	wmTray         = wmApp + 1
+	wmHealthResult = wmApp + 2
+	wmCommand      = 0x0111
 	wmTimer   = 0x0113
 	wmDestroy = 0x0002
 
@@ -394,14 +395,15 @@ func (t *trayState) quit() {
 func (t *trayState) checkDaemonHealth() {
 	addr := fmt.Sprintf("127.0.0.1:%d", t.daemonPort)
 	conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
+	var ok uintptr
 	if err != nil {
-		t.daemonOK = false
-		t.setStatus(trayStatusWarning)
+		log.Printf("tray: health check failed: %v", err)
 	} else {
 		conn.Close()
-		t.daemonOK = true
-		t.setStatus(trayStatusHealthy)
+		ok = 1
 	}
+	// Post result to main thread — Win32 icon updates must happen there.
+	procPostMessageW.Call(t.hwnd, wmHealthResult, ok, 0)
 }
 
 func trayWndProc(hwnd, msg, wParam, lParam uintptr) uintptr {
@@ -436,6 +438,16 @@ func trayWndProc(hwnd, msg, wParam, lParam uintptr) uintptr {
 
 	case wmCommand:
 		t.handleMenuCommand(uint16(wParam & 0xFFFF))
+		return 0
+
+	case wmHealthResult:
+		if wParam != 0 {
+			t.daemonOK = true
+			t.setStatus(trayStatusHealthy)
+		} else {
+			t.daemonOK = false
+			t.setStatus(trayStatusWarning)
+		}
 		return 0
 
 	case wmTimer:
