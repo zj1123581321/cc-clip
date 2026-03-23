@@ -380,7 +380,12 @@ func hotkeyProcessPID() (int, bool) {
 	return pid, true
 }
 
+var hotkeyPIDPathOverride string
+
 func hotkeyPIDPath() string {
+	if hotkeyPIDPathOverride != "" {
+		return hotkeyPIDPathOverride
+	}
 	cacheDir, err := os.UserCacheDir()
 	if err != nil {
 		home, _ := os.UserHomeDir()

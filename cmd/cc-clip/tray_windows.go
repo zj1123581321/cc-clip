@@ -482,8 +482,13 @@ func copyUTF16(dst []uint16, src string) {
 	dst[n] = 0
 }
 
+var hotkeyStopFilePathOverride string
+
 // hotkeyStopFilePath returns the path to the stop sentinel file.
 func hotkeyStopFilePath() string {
+	if hotkeyStopFilePathOverride != "" {
+		return hotkeyStopFilePathOverride
+	}
 	cacheDir, err := os.UserCacheDir()
 	if err != nil {
 		home, _ := os.UserHomeDir()

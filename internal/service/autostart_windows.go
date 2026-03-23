@@ -124,6 +124,18 @@ func Uninstall() error {
 	return nil
 }
 
+// processChecker returns the command line output for matching processes.
+// Overridable for testing.
+var processChecker = func() (string, error) {
+	psCmd := `(Get-CimInstance Win32_Process -Filter "name='cc-clip.exe'").CommandLine`
+	cmd := exec.Command("powershell", "-NoProfile", "-Command", psCmd)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", err
+	}
+	return string(out), nil
+}
+
 // Status checks if the auto-start registry entry exists and the daemon process is running.
 func Status() (bool, error) {
 	_, err := regQuery(registryKey, registryValue)
@@ -132,15 +144,11 @@ func Status() (bool, error) {
 	}
 	// Registry entry exists — check if process is actually running
 	// by looking for cc-clip serve in the process list.
-	// Use PowerShell Get-CimInstance instead of wmic, which is deprecated
-	// and removed by default on Windows 11 24H2+.
-	psCmd := `(Get-CimInstance Win32_Process -Filter "name='cc-clip.exe'").CommandLine`
-	cmd := exec.Command("powershell", "-NoProfile", "-Command", psCmd)
-	out, err := cmd.CombinedOutput()
+	out, err := processChecker()
 	if err != nil {
 		return false, nil // Registry entry exists but daemon not running
 	}
-	if strings.Contains(string(out), "serve") {
+	if strings.Contains(out, "serve") {
 		return true, nil
 	}
 	return false, nil

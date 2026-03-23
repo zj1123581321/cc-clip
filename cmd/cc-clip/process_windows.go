@@ -56,7 +56,15 @@ func stopLocalProcess(pidFile string, expectedCmd string) {
 	fmt.Println("      stopped")
 }
 
+// localProcessCommandFunc is the backing implementation for localProcessCommand.
+// Overridable for testing.
+var localProcessCommandFunc = localProcessCommandImpl
+
 func localProcessCommand(pid int) (string, error) {
+	return localProcessCommandFunc(pid)
+}
+
+func localProcessCommandImpl(pid int) (string, error) {
 	// Use PowerShell Get-CimInstance instead of wmic, which is deprecated
 	// and removed by default on Windows 11 24H2+.
 	psCmd := fmt.Sprintf(`(Get-CimInstance Win32_Process -Filter "ProcessId=%d").CommandLine`, pid)
