@@ -6,13 +6,14 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
-	"syscall"
+
+	"github.com/shunmei/cc-clip/internal/win32"
 )
 
 // hiddenCmd creates an exec.Cmd that won't flash a console window.
 func hiddenCmd(name string, args ...string) *exec.Cmd {
 	cmd := exec.Command(name, args...)
-	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: 0x08000000} // CREATE_NO_WINDOW
+	win32.HideConsoleWindow(cmd)
 	return cmd
 }
 

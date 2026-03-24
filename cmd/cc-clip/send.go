@@ -237,7 +237,7 @@ func remoteExecNoForward(host, cmd string) (string, error) {
 	hideConsoleWindow(c)
 	out, err := c.CombinedOutput()
 	if err != nil {
-		return strings.TrimSpace(string(out)), fmt.Errorf("%s", strings.TrimSpace(string(out)))
+		return strings.TrimSpace(string(out)), fmt.Errorf("ssh failed: %s: %w", strings.TrimSpace(string(out)), err)
 	}
 	return strings.TrimSpace(string(out)), nil
 }
@@ -246,7 +246,7 @@ func scpUploadNoForward(host, localPath, remotePath string) error {
 	c := exec.Command("scp", "-o", "ClearAllForwardings=yes", localPath, fmt.Sprintf("%s:%s", host, remotePath))
 	hideConsoleWindow(c)
 	if out, err := c.CombinedOutput(); err != nil {
-		return fmt.Errorf("%s", strings.TrimSpace(string(out)))
+		return fmt.Errorf("scp failed: %s: %w", strings.TrimSpace(string(out)), err)
 	}
 	return nil
 }

@@ -4,10 +4,10 @@ package main
 
 import (
 	"os/exec"
-	"syscall"
+
+	"github.com/shunmei/cc-clip/internal/win32"
 )
 
-// hideConsoleWindow prevents a console window flash when running child processes.
 func hideConsoleWindow(cmd *exec.Cmd) {
-	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: 0x08000000} // CREATE_NO_WINDOW
+	win32.HideConsoleWindow(cmd)
 }

@@ -5,6 +5,7 @@ package service
 import (
 	"errors"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -133,6 +134,65 @@ func TestUninstallStopsDaemonProcess(t *testing.T) {
 		t.Fatal("expected daemon stop sentinel to be written during Uninstall")
 	}
 	// Clean up.
+	os.Remove(stopFile)
+}
+
+func TestInstallRemovesStaleDaemonStop(t *testing.T) {
+	originalAdd := regAdd
+	originalStart := startDaemon
+	t.Cleanup(func() {
+		regAdd = originalAdd
+		startDaemon = originalStart
+	})
+
+	// Stub out regAdd and startDaemon so Install doesn't touch registry or launch wscript.
+	regAdd = func(key, name, value string) error { return nil }
+	startDaemon = func(vbs string) error { return nil }
+
+	// Pre-create a stale daemon.stop file (simulates previous Uninstall).
+	stopFile := daemonStopFilePath()
+	os.MkdirAll(filepath.Dir(stopFile), 0755)
+	os.WriteFile(stopFile, []byte("stop"), 0644)
+	t.Cleanup(func() {
+		os.Remove(stopFile)
+		os.Remove(vbsPath())
+	})
+
+	if err := Install(`C:\fake\cc-clip.exe`, 18339); err != nil {
+		t.Fatalf("Install: %v", err)
+	}
+
+	if _, err := os.Stat(stopFile); !os.IsNotExist(err) {
+		t.Fatal("expected Install to remove stale daemon.stop file")
+	}
+}
+
+func TestUninstallSucceedsEvenWhenStopFails(t *testing.T) {
+	originalDelete := regDelete
+	originalStop := stopDaemonProcess
+	t.Cleanup(func() {
+		regDelete = originalDelete
+		stopDaemonProcess = originalStop
+	})
+
+	// Simulate PowerShell failure (e.g., not in PATH, restricted policy).
+	stopDaemonProcess = func() error {
+		return errors.New("powershell not found")
+	}
+	regDelete = func(key, name string) error { return nil }
+
+	// Uninstall should succeed (return nil) even when stopDaemonProcess fails,
+	// because registry + VBS removal are the essential operations
+	// and the stop sentinel provides a fallback.
+	if err := Uninstall(); err != nil {
+		t.Fatalf("expected Uninstall to succeed even when stopDaemonProcess fails, got: %v", err)
+	}
+
+	// Stop sentinel should still be written for the VBS loop fallback.
+	stopFile := daemonStopFilePath()
+	if _, statErr := os.Stat(stopFile); os.IsNotExist(statErr) {
+		t.Fatal("expected daemon stop sentinel to be written even when stopDaemonProcess fails")
+	}
 	os.Remove(stopFile)
 }
 

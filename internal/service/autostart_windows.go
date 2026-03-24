@@ -104,6 +104,9 @@ var regQuery = func(key, name string) (string, error) {
 // Install registers cc-clip daemon for auto-start at user logon via the registry.
 // Uses a VBScript wrapper to launch the daemon with no visible window.
 func Install(binaryPath string, port int) error {
+	// Remove stale stop sentinel from a previous Uninstall, so the VBS loop doesn't exit immediately.
+	os.Remove(daemonStopFilePath())
+
 	// Ensure directories exist
 	logDir := filepath.Dir(logPath())
 	if err := os.MkdirAll(logDir, 0755); err != nil {
@@ -130,11 +133,19 @@ func Install(binaryPath string, port int) error {
 	}
 
 	// Start the daemon immediately (no window)
-	startCmd := exec.Command("wscript.exe", vbs)
-	if err := startCmd.Start(); err != nil {
-		return fmt.Errorf("registry entry created but failed to start daemon: %w", err)
+	if err := startDaemon(vbs); err != nil {
+		return err
 	}
 
+	return nil
+}
+
+// startDaemon launches the daemon via wscript.exe. Overridable for testing.
+var startDaemon = func(vbs string) error {
+	cmd := exec.Command("wscript.exe", vbs)
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("registry entry created but failed to start daemon: %w", err)
+	}
 	return nil
 }
 
@@ -147,18 +158,26 @@ var stopDaemonProcess = func() error {
 	cmd := exec.Command("powershell", "-NoProfile", "-Command", psCmd)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return nil // No process found
+		// PowerShell itself failed (not in PATH, restricted execution policy, etc.).
+		// This is distinct from "no process found" which returns exit 0 with empty output.
+		return fmt.Errorf("failed to query daemon process: %w", err)
 	}
 	pidStr := strings.TrimSpace(string(out))
 	if pidStr == "" {
 		return nil
 	}
 	// taskkill each matching PID (there may be multiple lines).
+	var killErrs []string
 	for _, line := range strings.Split(pidStr, "\n") {
 		pid := strings.TrimSpace(line)
 		if pid != "" {
-			exec.Command("taskkill", "/PID", pid, "/F").Run()
+			if err := exec.Command("taskkill", "/PID", pid, "/F").Run(); err != nil {
+				killErrs = append(killErrs, fmt.Sprintf("PID %s: %v", pid, err))
+			}
 		}
+	}
+	if len(killErrs) > 0 {
+		return fmt.Errorf("failed to kill daemon: %s", strings.Join(killErrs, "; "))
 	}
 	return nil
 }
@@ -177,7 +196,12 @@ func Uninstall() error {
 	writeDaemonStopFile()
 
 	// Stop the running daemon process.
-	_ = stopDaemonProcess()
+	// The stop sentinel above ensures the VBS loop exits even if this fails.
+	// We warn (not fail) because the uninstall itself (registry + VBS removal) still succeeds,
+	// and the sentinel provides a fallback for stopping the VBS restart loop.
+	if err := stopDaemonProcess(); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: could not stop daemon process: %v\n", err)
+	}
 
 	// Remove registry entry (ignore errors if not found)
 	_ = regDelete(registryKey, registryValue)
