@@ -134,6 +134,8 @@ func Install(binaryPath string, port int) error {
 
 	// Start the daemon immediately (no window)
 	if err := startDaemon(vbs); err != nil {
+		_ = regDelete(registryKey, registryValue)
+		os.Remove(vbs)
 		return err
 	}
 

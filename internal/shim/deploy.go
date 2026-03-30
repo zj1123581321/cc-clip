@@ -62,11 +62,7 @@ func WriteRemoteState(session *SSHSession, state *DeployState) error {
 
 	// Write via stdin to avoid shell escaping issues with JSON
 	remoteCmd := fmt.Sprintf("mkdir -p ~/.cache/cc-clip && cat > %s", remoteDeployPath)
-	args := []string{}
-	if session.controlPath != "" {
-		args = append(args, "-o", fmt.Sprintf("ControlPath=%s", session.controlPath))
-	}
-	args = append(args, session.host, remoteCmd)
+	args := append(session.connArgs(), session.host, remoteCmd)
 	c := exec.Command("ssh", args...)
 	c.Stdin = strings.NewReader(string(data) + "\n")
 	if out, err := c.CombinedOutput(); err != nil {

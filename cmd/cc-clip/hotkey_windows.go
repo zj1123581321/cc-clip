@@ -255,6 +255,23 @@ func runHotkeyLoop(host, remoteDir, hotkey string, delay time.Duration) {
 			return
 		}
 
+		// When tray is absent (trayHwnd == 0), WM_HOTKEY is posted to the
+		// thread message queue and DispatchMessage won't route it anywhere.
+		// Handle it explicitly here so the hotkey works in tray-less mode.
+		if m.message == wmHotkey && tray == nil {
+			if !hotkeyRunning.Swap(true) {
+				go func() {
+					defer hotkeyRunning.Store(false)
+					if err := handleHotkeyPress(host, remoteDir, binding, delay); err != nil {
+						log.Printf("hotkey: send failed: %v", err)
+						return
+					}
+					log.Printf("hotkey: send completed")
+				}()
+			}
+			continue
+		}
+
 		translateMessage.Call(uintptr(unsafe.Pointer(&m)))
 		dispatchMessage.Call(uintptr(unsafe.Pointer(&m)))
 	}

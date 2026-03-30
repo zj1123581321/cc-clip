@@ -196,6 +196,37 @@ func TestUninstallSucceedsEvenWhenStopFails(t *testing.T) {
 	os.Remove(stopFile)
 }
 
+func TestInstallRollbackOnStartFailure(t *testing.T) {
+	originalAdd := regAdd
+	originalDelete := regDelete
+	originalStart := startDaemon
+	t.Cleanup(func() {
+		regAdd = originalAdd
+		regDelete = originalDelete
+		startDaemon = originalStart
+	})
+
+	regAdd = func(key, name, value string) error { return nil }
+	startDaemon = func(vbs string) error { return errors.New("wscript not found") }
+	regDeleteCalled := false
+	regDelete = func(key, name string) error {
+		regDeleteCalled = true
+		return nil
+	}
+
+	err := Install(`C:\fake\cc-clip.exe`, 18339)
+	if err == nil {
+		t.Fatal("expected Install to fail")
+	}
+	if !regDeleteCalled {
+		t.Fatal("expected regDelete rollback on startDaemon failure")
+	}
+	// VBS file should also be cleaned up.
+	if _, err := os.Stat(vbsPath()); !os.IsNotExist(err) {
+		t.Fatal("expected VBS file to be removed on startDaemon failure")
+	}
+}
+
 func TestGenerateVBSContainsRestartLoop(t *testing.T) {
 	content := generateVBS(`C:\tools\cc-clip.exe`, 18339)
 
